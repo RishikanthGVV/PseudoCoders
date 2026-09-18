@@ -12,6 +12,42 @@ import './App.css'
 
 type EngineMode = 'STANDARD' | 'WIREFRAME' | 'THERMAL' | 'AIRFLOW'
 
+type AdapterSensor = {
+  id: string
+  name: string
+  component: string
+  value: number
+  unit: string
+  trend_delta: number
+  status: string
+}
+
+type AdapterData = {
+  engine: {
+    id: string
+    aircraftId: string
+    cycle: number
+    operatingCondition: string
+  }
+  prediction: {
+    rul: number
+    serviceCycle: number
+    status: string
+    model: string
+    dataset: string
+  }
+  sensors: AdapterSensor[]
+  anomalies: Array<{
+    time?: string
+    cycle?: number
+    sensor?: string
+    component?: string
+    message?: string
+    level?: string
+  }>
+  history: Array<Record<string, number>>
+}
+
 const screens: { id: ScreenName; label: string }[] = [
   { id: 'command', label: 'COMMAND CENTER' },
   { id: 'digitalTwin', label: 'DIGITAL TWIN' },
@@ -44,6 +80,143 @@ const componentSensorMap: Record<string, string> = {
   exhaust: 'exhaust-temp',
 }
 
+const adapterComponentMap: Record<string, string> = {
+  COMPRESSOR: 'compressor',
+  TURBINE: 'hp-turbine',
+  CORE: 'combustor',
+  FAN: 'fan',
+}
+
+const mapAdapterStatus = (status: string): 'NORMAL' | 'WATCH' | 'CRITICAL' =>
+  status === 'CRITICAL' ? 'CRITICAL' : status === 'WARNING' || status === 'WATCH' ? 'WATCH' : 'NORMAL'
+
+const mapAdapterData = (data: AdapterData): {
+  engine: ReturnType<typeof engineService.getEngineMeta> & { serviceCycle: number }
+  telemetry: ReturnType<typeof engineService.getTelemetry>
+  anomalies: ReturnType<typeof engineService.getAnomalies>
+  componentStates: Record<string, string>
+} => {
+  const telemetry = data.sensors.map((sensor) => {
+    const historyKey = sensor.id === 's_4' ? 's_4_temp' : sensor.id === 's_11' ? 's_11_pressure' : undefined
+    const history = historyKey
+      ? data.history
+          .filter((point) => typeof point.cycle === 'number' && typeof point[historyKey] === 'number')
+          .map((point) => ({ cycle: point.cycle, value: point[historyKey] }))
+      : [{ cycle: data.engine.cycle, value: sensor.value }]
+    const values = history.length > 0 ? history.map((point) => point.value) : [sensor.value]
+
+    return {
+      key: sensor.id,
+      name: sensor.name,
+      unit: sensor.unit,
+      current: sensor.value,
+      status: mapAdapterStatus(sensor.status),
+      delta: sensor.trend_delta,
+      trend: values.slice(-6),
+      min: Math.min(...values),
+      max: Math.max(...values),
+      avg: values.reduce((sum, value) => sum + value, 0) / values.length,
+      history: history.length > 0 ? history : [{ cycle: data.engine.cycle, value: sensor.value }],
+    }
+  })
+
+  const anomalies = data.anomalies.map((event) => ({
+    time: event.time ?? 'ADAPTER',
+    cycle: event.cycle ?? data.engine.cycle,
+    sensor: event.sensor ?? 'ADAPTER',
+    component: adapterComponentMap[event.component?.toUpperCase() ?? ''] ?? event.component?.toLowerCase() ?? 'engine',
+    message: event.message ?? 'ADAPTER ANOMALY',
+    level: (event.level === 'critical' ? 'critical' : event.level === 'watch' || event.level === 'warning' ? 'watch' : 'normal') as 'normal' | 'watch' | 'critical',
+  }))
+
+  const componentStates: Record<string, string> = {}
+  data.sensors.forEach((sensor) => {
+    const component = adapterComponentMap[sensor.component.toUpperCase()]
+    if (component) componentStates[component] = mapAdapterStatus(sensor.status)
+  })
+
+  return {
+    engine: {
+      ...engineService.getEngineMeta(),
+      aircraftId: data.engine.aircraftId,
+      engineId: data.engine.id,
+      currentCycle: data.engine.cycle,
+      rul: data.prediction.rul,
+      serviceCycle: data.prediction.serviceCycle,
+      status: data.prediction.status === 'NORMAL' ? 'NOMINAL' : data.prediction.status,
+      nextInspection: Math.max(0, data.prediction.serviceCycle - data.engine.cycle),
+      serviceWindow: `SERVICE AT CYCLE ${data.prediction.serviceCycle}`,
+      risk: data.prediction.status === 'CRITICAL' ? 'HIGH' : data.prediction.status === 'WARNING' ? 'MEDIUM' : 'LOW',
+      model: data.prediction.model,
+      dataset: data.prediction.dataset,
+    },
+    telemetry,
+    anomalies,
+    componentStates,
+  }
+}
+
+type EngineState = {
+  currentCycle: number
+  rul: number
+  engineStatus: string
+  health: number
+  sensors: ReturnType<typeof mapAdapterData>['telemetry']
+  anomalies: ReturnType<typeof mapAdapterData>['anomalies']
+  selectedComponent: string
+}
+
+const deriveEngineState = (base: ReturnType<typeof mapAdapterData>, cycle: number, selectedComponent: string): EngineState => {
+  const currentCycle = Math.max(0, Math.min(218, Math.round(cycle)))
+  const progress = currentCycle / 218
+  const health = Math.max(8, Math.round(100 - progress * 48 - Math.max(0, progress - 0.72) * 85))
+  const engineStatus = health <= 35 ? 'CRITICAL' : health <= 65 ? 'WARNING' : 'NOMINAL'
+  const sensors = base.telemetry.map((sensor, index) => {
+    const direction = index % 3 === 0 ? 1 : -1
+    const current = Number((sensor.current * (1 + direction * progress * 0.16)).toFixed(4))
+    const history = Array.from({ length: Math.max(2, Math.floor(currentCycle / 10) + 1) }, (_, historyIndex) => {
+      const historyCycle = Math.min(currentCycle, historyIndex * 10)
+      const historyProgress = historyCycle / 218
+      return {
+        cycle: historyCycle,
+        value: Number((sensor.current * (1 + direction * historyProgress * 0.16)).toFixed(4)),
+      }
+    })
+    const previous = history[Math.max(0, history.length - 2)]?.value ?? sensor.current
+    return {
+      ...sensor,
+      current,
+      status: (engineStatus === 'CRITICAL' ? 'CRITICAL' : engineStatus === 'WARNING' ? 'WATCH' : 'NORMAL') as 'NORMAL' | 'WATCH' | 'CRITICAL',
+      delta: Number((((current - previous) / Math.max(Math.abs(previous), 1)) * 100).toFixed(1)),
+      trend: history.slice(-6).map((point) => point.value),
+      min: Math.min(...history.map((point) => point.value)),
+      max: Math.max(...history.map((point) => point.value)),
+      avg: history.reduce((sum, point) => sum + point.value, 0) / history.length,
+      history,
+    }
+  })
+  const anomalies = engineStatus === 'NOMINAL'
+    ? base.anomalies
+    : [{
+        time: 'REPLAY',
+        cycle: currentCycle,
+        sensor: sensors[0]?.name ?? 'ENGINE',
+        component: currentCycle >= 145 ? 'combustor' : 'compressor',
+        message: engineStatus === 'CRITICAL' ? 'ENGINE CONDITION CRITICAL' : 'DEGRADATION TREND REQUIRES REVIEW',
+        level: engineStatus === 'CRITICAL' ? 'critical' as const : 'watch' as const,
+      }]
+
+  return {
+    currentCycle,
+    rul: Math.max(0, base.engine.rul + (base.engine.currentCycle - currentCycle)),
+    engineStatus,
+    health,
+    sensors,
+    anomalies,
+    selectedComponent,
+  }
+}
+
 function App() {
   const [activeScreen, setActiveScreen] = useState<ScreenName>('command')
   const [selectedComponent, setSelectedComponent] = useState('hp-turbine')
@@ -51,6 +224,8 @@ function App() {
   const [engineMode, setEngineMode] = useState<EngineMode>('STANDARD')
   const [replay, setReplay] = useState(createReplayState())
   const [time, setTime] = useState(() => new Date())
+  const [adapter, setAdapter] = useState<ReturnType<typeof mapAdapterData> | null>(null)
+  const [adapterError, setAdapterError] = useState<string | null>(null)
   const selectComponent = (component: string) => {
     setSelectedComponent(component)
     setSelectedSensor(componentSensorMap[component] ?? 'vibration')
@@ -67,21 +242,61 @@ function App() {
     return () => window.clearInterval(timer)
   }, [replay.playing])
 
-  const baseEngine = engineService.getEngineMeta()
-  const telemetry = replay.frame.telemetry
-  const anomalies = [...replayEvents.filter((event) => event.cycle <= replay.frame.cycle), ...engineService.getAnomalies().filter((event) => event.cycle <= replay.frame.cycle)]
+  useEffect(() => {
+    let active = true
+    fetch('/mockData.json')
+      .then((response) => {
+        if (!response.ok) throw new Error(`Unable to load mockData.json (${response.status})`)
+        return response.json() as Promise<AdapterData>
+      })
+      .then((data) => {
+        if (active) setAdapter(mapAdapterData(data))
+      })
+      .catch((error: unknown) => {
+        if (active) setAdapterError(error instanceof Error ? error.message : 'Unable to load mockData.json')
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const baseEngine = adapter?.engine ?? engineService.getEngineMeta()
+  const engineState = adapter
+    ? deriveEngineState(adapter, replay.currentCycle, selectedComponent)
+    : {
+        currentCycle: replay.frame.cycle,
+        rul: replay.frame.rul,
+        engineStatus: replay.frame.status === 'HEALTHY' ? 'NOMINAL' : replay.frame.status,
+        health: replay.frame.health,
+        sensors: replay.frame.telemetry,
+        anomalies: [...replayEvents.filter((event) => event.cycle <= replay.frame.cycle), ...engineService.getAnomalies().filter((event) => event.cycle <= replay.frame.cycle)],
+        selectedComponent,
+      }
+  const telemetry = engineState.sensors
+  const anomalies = engineState.anomalies
   const maintenanceRecommendations = engineService.getMaintenanceRecommendations()
   const engine = {
     ...baseEngine,
-    currentCycle: replay.frame.cycle,
-    rul: replay.frame.rul,
-    health: replay.frame.health,
-    status: replay.frame.status === 'HEALTHY' ? 'NOMINAL' : replay.frame.status,
-    nextInspection: replay.frame.status === 'CRITICAL' ? 0 : Math.max(1, 42 - replay.frame.cycle),
-    serviceWindow: replay.frame.status === 'CRITICAL' ? 'SERVICE REQUIRED' : replay.frame.status === 'WARNING' ? 'REVIEW WITHIN 20 CYCLES' : 'WITHIN 40-50 CYCLES',
-    risk: replay.frame.status === 'CRITICAL' ? 'HIGH' : replay.frame.status === 'WARNING' ? 'MEDIUM' : 'LOW',
+    currentCycle: engineState.currentCycle,
+    rul: engineState.rul,
+    health: engineState.health,
+    status: engineState.engineStatus,
+    nextInspection: Math.max(0, (adapter?.engine.serviceCycle ?? 42) - engineState.currentCycle),
+    serviceWindow: engineState.engineStatus === 'CRITICAL' ? 'SERVICE REQUIRED' : `SERVICE AT CYCLE ${adapter?.engine.serviceCycle ?? 42}`,
+    risk: engineState.engineStatus === 'CRITICAL' ? 'HIGH' : engineState.engineStatus === 'WARNING' ? 'MEDIUM' : 'LOW',
   }
-  const components = engineService.getComponentHealth()
+  const components = useMemo(
+    () => engineService.getComponentHealth().map((component) => {
+      const componentState = getReplayComponentState(component.name, engineState.currentCycle)
+      const degradation = componentState === 'CRITICAL' ? 34 : componentState === 'WARNING' ? 20 : componentState === 'DEGRADING' ? 10 : 0
+      return {
+        ...component,
+        health: Math.max(8, component.health - degradation),
+        trend: componentState === 'CRITICAL' || componentState === 'WARNING' ? 'DECLINING' as const : component.trend,
+      }
+    }),
+    [engineState.currentCycle],
+  )
 
   const currentComponent = useMemo(
     () => components.find((component) => component.name === selectedComponent) ?? components[0],
@@ -89,7 +304,15 @@ function App() {
   )
   const selectedMetric = telemetry.find((metric) => metric.key === selectedSensor) ?? telemetry[0]
   const relatedAnomalies = anomalies.filter((event) => event.component === selectedComponent)
-  const selectedComponentState = getReplayComponentState(selectedComponent, replay.frame.cycle)
+  const selectedComponentState = getReplayComponentState(selectedComponent, engineState.currentCycle)
+
+  if (!adapter && !adapterError) {
+    return <div className="app-shell"><div className="panel" style={{ margin: '2rem', padding: '1rem' }}>Loading engine telemetry…</div></div>
+  }
+
+  if (adapterError) {
+    return <div className="app-shell"><div className="panel" style={{ margin: '2rem', padding: '1rem' }}>Telemetry unavailable: {adapterError}</div></div>
+  }
 
   const sectionLabel =
     activeScreen === 'command'
@@ -154,6 +377,7 @@ function App() {
 
       <ReplayControl
         replay={replay}
+        engineState={engineState}
         onToggle={() => setReplay((state) => ({ ...state, playing: !state.playing && state.currentCycle < state.totalCycles }))}
         onReset={() => setReplay((state) => resetReplay(state))}
         onSpeedChange={(speed) => setReplay((state) => ({ ...state, speed }))}
@@ -179,7 +403,7 @@ function App() {
               <>
                 <div className="command-layout">
                   <div className="engine-column">
-                    <EngineCard engine={engine} replayCycle={replay.frame.cycle} selectedComponent={selectedComponent} setSelectedComponent={selectComponent} />
+                    <EngineCard engine={engine} replayCycle={engineState.currentCycle} selectedComponent={selectedComponent} setSelectedComponent={selectComponent} />
                   </div>
 
                   <div className="instrument-column">
@@ -191,7 +415,7 @@ function App() {
                 <div className="lower-grid">
                   <div className="panel panel-graph">
                     <PanelHeader title="DEGRADATION ANALYTICS" tag="PREDICTION / TRACK" />
-                    <DegradationChart currentCycle={replay.frame.cycle} />
+                    <DegradationChart currentCycle={engineState.currentCycle} />
                   </div>
 
                   <div className="panel panel-anomaly">
@@ -239,7 +463,7 @@ function App() {
                         selectedComponent={selectedComponent}
                         setSelectedComponent={selectComponent}
                         mode={engineMode}
-                        replayCycle={replay.frame.cycle}
+                        replayCycle={engineState.currentCycle}
                       />
                       <ContactShadows position={[0, -2.8, 0]} opacity={0.45} scale={12} blur={2.4} far={7} />
                       <OrbitControls enablePan={false} enableDamping minDistance={6} maxDistance={16} />
@@ -265,11 +489,10 @@ function App() {
                   <div className="inspection-card">
                     <div className="inspection-row"><span>COMPONENT</span><strong>{currentComponent.label}</strong></div>
                     <div className="inspection-row"><span>STATE</span><strong className={`component-state ${selectedComponentState.toLowerCase()}`}>{selectedComponentState}</strong></div>
-                    <div className="inspection-row"><span>HEALTH</span><strong>{currentComponent.health}% / ENGINE-LINKED DEMO</strong></div>
-                    <div className="inspection-row"><span>TEMPERATURE</span><strong>{currentComponent.temperature} K</strong></div>
-                    <div className="inspection-row"><span>PRESSURE</span><strong>{currentComponent.pressure} bar</strong></div>
-                    <div className="inspection-row"><span>EFFICIENCY</span><strong>{currentComponent.efficiency}%</strong></div>
-                    <div className="inspection-row"><span>TREND</span><strong>{currentComponent.trend}</strong></div>
+                    <div className="inspection-row"><span>HEALTH</span><strong>{adapter ? 'NOT PROVIDED BY ADAPTER' : `${currentComponent.health}%`}</strong></div>
+                    <div className="inspection-row"><span>SENSOR</span><strong>{selectedMetric?.name ?? 'NOT PROVIDED'}</strong></div>
+                    <div className="inspection-row"><span>VALUE</span><strong>{selectedMetric ? `${selectedMetric.current} ${selectedMetric.unit}` : 'NOT PROVIDED'}</strong></div>
+                    <div className="inspection-row"><span>TREND</span><strong>{selectedMetric ? `${selectedMetric.delta > 0 ? '+' : ''}${selectedMetric.delta}%` : 'NOT PROVIDED'}</strong></div>
                   </div>
 
                   <div className="inspection-evidence">
@@ -279,11 +502,11 @@ function App() {
                         <span className={`status-led ${event.level === 'normal' ? 'good' : event.level === 'watch' ? 'watch' : 'critical'}`} />
                         <span>{event.sensor} / {event.message}</span>
                       </div>
-                    )) : <div className="evidence-line">NO LINKED EVENTS IN DEMO STREAM</div>}
+                    )) : <div className="evidence-line">NO LINKED EVENTS IN ADAPTER DATA</div>}
                   </div>
 
                   <div className="mini-chart-wrap">
-                    <TrendMiniChart component={currentComponent} />
+                    <TrendMiniChart metric={selectedMetric} />
                   </div>
                 </div>
               </div>
@@ -320,7 +543,7 @@ function App() {
                       </button>
                     ))}
                   </div>
-                  <TelemetryChart metric={selectedMetric} component={currentComponent} />
+                  {selectedMetric && <TelemetryChart metric={selectedMetric} component={currentComponent} />}
                 </div>
               </div>
             )}
@@ -330,13 +553,13 @@ function App() {
                 <div className="prediction-stats">
                   <StatTile label="REMAINING USEFUL LIFE" value={`${engine.rul}`} suffix="CYCLES" />
                   <StatTile label="CURRENT CYCLE" value={`${engine.currentCycle}`} suffix="CYCLE" />
-                  <StatTile label="ENGINE HEALTH" value={`${engine.health}`} suffix="%" />
+                  <StatTile label="ENGINE HEALTH" value={engine.health === null ? 'N/A' : `${engine.health}`} suffix="%" />
                 </div>
 
                 <div className="panel prediction-panel">
                   <PanelHeader title="PREDICTED DEGRADATION" tag="MODEL INFERENCE" />
                   <div className="analysis-target">INVESTIGATION TARGET <strong>{currentComponent.label}</strong> <span>ENGINE-LEVEL MODEL OUTPUT</span></div>
-                  <PredictionChart currentCycle={replay.frame.cycle} />
+                  <PredictionChart currentCycle={engineState.currentCycle} />
                 </div>
 
                 <div className="panel trace-panel">
@@ -357,11 +580,11 @@ function App() {
                     <div className="tiny-label">TARGET</div>
                     <div className="panel-value">{engine.target}</div>
                     <div className="tiny-label">FAILURE WINDOW</div>
-                    <div className="panel-value">305 CYCLES</div>
+                    <div className="panel-value">NOT PROVIDED</div>
                   </div>
                   <div className="panel model-panel">
                     <div className="tiny-label">INFERENCE STATUS</div>
-                    <div className="panel-value">DEMO OUTPUT</div>
+                    <div className="panel-value">ADAPTER OUTPUT</div>
                     <div className="tiny-label">COMPONENT MODEL</div>
                     <div className="panel-value">NOT AVAILABLE</div>
                   </div>
@@ -421,7 +644,7 @@ function App() {
   )
 }
 
-function ReplayControl({ replay, onToggle, onReset, onSpeedChange, onRunChange }: { replay: ReplayState; onToggle: () => void; onReset: () => void; onSpeedChange: (speed: ReplaySpeed) => void; onRunChange: (runId: string) => void }) {
+function ReplayControl({ replay, engineState, onToggle, onReset, onSpeedChange, onRunChange }: { replay: ReplayState; engineState: EngineState; onToggle: () => void; onReset: () => void; onSpeedChange: (speed: ReplaySpeed) => void; onRunChange: (runId: string) => void }) {
   const status = replay.currentCycle >= replay.totalCycles ? 'RUN COMPLETE' : replay.playing ? 'PLAYING' : 'PAUSED'
   const progress = (replay.currentCycle / replay.totalCycles) * 100
 
@@ -438,9 +661,9 @@ function ReplayControl({ replay, onToggle, onReset, onSpeedChange, onRunChange }
       </div>
       <div className="replay-readouts">
         <span>ENGINE <strong>{replayRuns[0].id}</strong></span>
-        <span>CYCLE <strong>{replay.frame.cycle} / {replay.totalCycles}</strong></span>
-        <span>RUL <strong>{replay.frame.rul} CYCLES</strong></span>
-        <span>HEALTH <strong>{replay.frame.health}% / {replay.frame.status}</strong></span>
+        <span>CYCLE <strong>{engineState.currentCycle} / {replay.totalCycles}</strong></span>
+        <span>RUL <strong>{engineState.rul} CYCLES</strong></span>
+        <span>HEALTH <strong>{engineState.health}% / {engineState.engineStatus}</strong></span>
       </div>
       <div className="replay-actions">
         <button type="button" className="ghost-button" onClick={onReset}>RESET</button>
@@ -473,7 +696,7 @@ function HUDBackground() {
   )
 }
 
-function EngineCard({ engine, replayCycle, selectedComponent, setSelectedComponent }: { engine: ReturnType<typeof engineService.getEngineMeta>; replayCycle: number; selectedComponent: string; setSelectedComponent: (value: string) => void }) {
+function EngineCard({ engine, replayCycle, selectedComponent, setSelectedComponent }: { engine: Omit<ReturnType<typeof engineService.getEngineMeta>, 'health'> & { health: number | null }; replayCycle: number; selectedComponent: string; setSelectedComponent: (value: string) => void }) {
   return (
     <div className="panel engine-panel">
       <PanelHeader title="ENGINE DIGITAL TWIN" tag="DATA LINK STABLE" />
@@ -710,7 +933,7 @@ function PanelHeader({ title, tag }: { title: string; tag: string }) {
   )
 }
 
-function RULGauge({ engine }: { engine: ReturnType<typeof engineService.getEngineMeta> }) {
+function RULGauge({ engine }: { engine: { rul: number; health: number | null; status: string; currentCycle: number } }) {
   const gaugeProgress = Math.max(24, Math.round((engine.rul / 218) * 220))
   return (
     <div className="panel gauge-panel">
@@ -727,7 +950,7 @@ function RULGauge({ engine }: { engine: ReturnType<typeof engineService.getEngin
       <div className="gauge-meta">
         <div className="meta-block">
           <span className="tiny-label">ENGINE HEALTH</span>
-          <strong>{engine.health}%</strong>
+          <strong>{engine.health === null ? 'N/A' : `${engine.health}%`}</strong>
         </div>
         <div className="meta-block">
           <span className="tiny-label">STATUS</span>
@@ -808,7 +1031,7 @@ function AnomalyStream({ events }: { events: Array<{ time: string; cycle: number
   )
 }
 
-function MaintenanceForecast({ engine }: { engine: ReturnType<typeof engineService.getEngineMeta> }) {
+function MaintenanceForecast({ engine }: { engine: Omit<ReturnType<typeof engineService.getEngineMeta>, 'health'> & { health: number | null } }) {
   return (
     <div className="maintenance-summary">
       <div className="maintenance-stat-row">
@@ -944,14 +1167,10 @@ function StatTile({ label, value, suffix }: { label: string; value: string; suff
   )
 }
 
-function TrendMiniChart({ component }: { component: ComponentHealth }) {
+function TrendMiniChart({ metric }: { metric: ReturnType<typeof engineService.getTelemetry>[number] | undefined }) {
+  if (!metric) return null
   const data = [
-    { value: component.health - 5 },
-    { value: component.health - 3 },
-    { value: component.health - 2 },
-    { value: component.health },
-    { value: component.health - 1.6 },
-    { value: component.health - 3.2 },
+    ...metric.history.slice(-6).map((point) => ({ value: point.value })),
   ]
 
   return (
