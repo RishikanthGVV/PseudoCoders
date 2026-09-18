@@ -19,7 +19,7 @@
             "component": "COMPRESSOR",
             "value": 0.4127,
             "unit": "\u00b0R",
-            "trend_delta": 0.01,
+            "trend_delta": 0.017,
             "status": "NOMINAL"
         },
         {
@@ -28,7 +28,7 @@
             "component": "COMPRESSOR",
             "value": 0.2219,
             "unit": "\u00b0R",
-            "trend_delta": -0.01,
+            "trend_delta": 0.017,
             "status": "NOMINAL"
         },
         {
@@ -37,7 +37,7 @@
             "component": "TURBINE",
             "value": 0.2812,
             "unit": "\u00b0R",
-            "trend_delta": 0.011,
+            "trend_delta": 0.012,
             "status": "NOMINAL"
         },
         {
@@ -46,7 +46,7 @@
             "component": "COMPRESSOR",
             "value": 0.2262,
             "unit": "psia",
-            "trend_delta": -0.013,
+            "trend_delta": 0.013,
             "status": "NOMINAL"
         },
         {
@@ -55,7 +55,7 @@
             "component": "CORE",
             "value": 0.1557,
             "unit": "rpm",
-            "trend_delta": -0.013,
+            "trend_delta": 0.009,
             "status": "NOMINAL"
         },
         {
@@ -64,7 +64,7 @@
             "component": "FAN",
             "value": 0.2982,
             "unit": "Ratio",
-            "trend_delta": 0.005,
+            "trend_delta": -0.011,
             "status": "NOMINAL"
         }
     ],
