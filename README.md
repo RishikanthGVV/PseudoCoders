@@ -24,6 +24,7 @@ Data Consumption: React useEffect fetches the local JSON payload.
 UI Dashboards: "Black-first" aerospace modules (Command Center, Live Telemetry, Prediction Workstation) driven by the prediction and history arrays.
 
 graph TD
+
     subgraph "1. Machine Learning Backend (Python)"
         A[(NASA C-MAPSS Dataset)] -->|Raw Telemetry| B(Data Preprocessing & Scaling)
         B --> C{XGBoost Regressor}
