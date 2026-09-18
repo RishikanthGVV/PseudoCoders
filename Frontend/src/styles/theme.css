@@ -1,0 +1,65 @@
+:root {
+  --bg-0: #050505;
+  --bg-1: #0b0c0d;
+  --bg-2: #151719;
+  --panel: rgba(19, 20, 21, 0.9);
+  --panel-alt: rgba(12, 13, 14, 0.97);
+  --panel-strong: rgba(6, 7, 8, 0.94);
+  --line: rgba(183, 190, 194, 0.22);
+  --line-strong: rgba(224, 164, 88, 0.58);
+  --accent: #d8a45c;
+  --accent-soft: rgba(216, 164, 92, 0.16);
+  --green: #7ef5c0;
+  --amber: #e0a458;
+  --red: #ff5c78;
+  --text: #eef0ed;
+  --text-soft: #a5abae;
+  --text-mute: #737a7d;
+  --shadow: rgba(0, 0, 0, 0.86);
+}
+
+* { box-sizing: border-box; }
+
+html {
+  background:
+    radial-gradient(circle at 78% 0%, rgba(216, 164, 92, 0.08), transparent 24%),
+    linear-gradient(180deg, #020202 0%, #090a0a 100%);
+  color: var(--text);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: 'Bahnschrift', 'Arial Narrow', sans-serif;
+  background: transparent;
+  color: var(--text);
+}
+
+button, select {
+  font: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.18); }
+}
+
+@keyframes scan {
+  0% { transform: translateY(-120%); }
+  100% { transform: translateY(120%); }
+}
+
+@keyframes drift {
+  0% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -3px, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+
+@keyframes tracePulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
