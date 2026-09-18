@@ -1,0 +1,229 @@
+{
+    "engine": {
+        "id": "TG-001",
+        "aircraftId": "AERO-77",
+        "cycle": 31,
+        "operatingCondition": "CRUISE"
+    },
+    "prediction": {
+        "rul": 121,
+        "serviceCycle": 152,
+        "status": "NORMAL",
+        "model": "XGBoost Regressor",
+        "dataset": "NASA C-MAPSS FD001"
+    },
+    "sensors": [
+        {
+            "id": "s_2",
+            "name": "LPC OUTLET TEMP",
+            "component": "COMPRESSOR",
+            "value": 0.4127,
+            "unit": "\u00b0R",
+            "trend_delta": 0.01,
+            "status": "NOMINAL"
+        },
+        {
+            "id": "s_3",
+            "name": "HPC OUTLET TEMP",
+            "component": "COMPRESSOR",
+            "value": 0.2219,
+            "unit": "\u00b0R",
+            "trend_delta": -0.01,
+            "status": "NOMINAL"
+        },
+        {
+            "id": "s_4",
+            "name": "LPT OUTLET TEMP",
+            "component": "TURBINE",
+            "value": 0.2812,
+            "unit": "\u00b0R",
+            "trend_delta": 0.011,
+            "status": "NOMINAL"
+        },
+        {
+            "id": "s_11",
+            "name": "HPC STATIC PRESSURE",
+            "component": "COMPRESSOR",
+            "value": 0.2262,
+            "unit": "psia",
+            "trend_delta": -0.013,
+            "status": "NOMINAL"
+        },
+        {
+            "id": "s_14",
+            "name": "CORE SPEED",
+            "component": "CORE",
+            "value": 0.1557,
+            "unit": "rpm",
+            "trend_delta": -0.013,
+            "status": "NOMINAL"
+        },
+        {
+            "id": "s_15",
+            "name": "BYPASS RATIO",
+            "component": "FAN",
+            "value": 0.2982,
+            "unit": "Ratio",
+            "trend_delta": 0.005,
+            "status": "NOMINAL"
+        }
+    ],
+    "anomalies": [],
+    "history": [
+        {
+            "cycle": 1,
+            "s_4_temp": 0.2694125590817009,
+            "s_11_pressure": 0.2083333333333357
+        },
+        {
+            "cycle": 2,
+            "s_4_temp": 0.2223160027008788,
+            "s_11_pressure": 0.38690476190476275
+        },
+        {
+            "cycle": 3,
+            "s_4_temp": 0.3222484807562438,
+            "s_11_pressure": 0.38690476190476275
+        },
+        {
+            "cycle": 4,
+            "s_4_temp": 0.4080013504388944,
+            "s_11_pressure": 0.25595238095238315
+        },
+        {
+            "cycle": 5,
+            "s_4_temp": 0.332039162727888,
+            "s_11_pressure": 0.2738095238095255
+        },
+        {
+            "cycle": 6,
+            "s_4_temp": 0.21742066171506025,
+            "s_11_pressure": 0.24404761904761685
+        },
+        {
+            "cycle": 7,
+            "s_4_temp": 0.38133018230924876,
+            "s_11_pressure": 0.2738095238095255
+        },
+        {
+            "cycle": 8,
+            "s_4_temp": 0.3146522619851453,
+            "s_11_pressure": 0.2142857142857153
+        },
+        {
+            "cycle": 9,
+            "s_4_temp": 0.5069209993247803,
+            "s_11_pressure": 0.3095238095238102
+        },
+        {
+            "cycle": 10,
+            "s_4_temp": 0.2766711681296421,
+            "s_11_pressure": 0.17261904761904745
+        },
+        {
+            "cycle": 11,
+            "s_4_temp": 0.3642808912896669,
+            "s_11_pressure": 0.2261904761904745
+        },
+        {
+            "cycle": 12,
+            "s_4_temp": 0.2628291694800815,
+            "s_11_pressure": 0.25000000000000355
+        },
+        {
+            "cycle": 13,
+            "s_4_temp": 0.36613774476705174,
+            "s_11_pressure": 0.29761904761904745
+        },
+        {
+            "cycle": 14,
+            "s_4_temp": 0.34824442943957123,
+            "s_11_pressure": 0.23214285714285765
+        },
+        {
+            "cycle": 15,
+            "s_4_temp": 0.2792032410533416,
+            "s_11_pressure": 0.29761904761904745
+        },
+        {
+            "cycle": 16,
+            "s_4_temp": 0.43062120189061304,
+            "s_11_pressure": 0.32142857142857295
+        },
+        {
+            "cycle": 17,
+            "s_4_temp": 0.369176232275489,
+            "s_11_pressure": 0.25000000000000355
+        },
+        {
+            "cycle": 18,
+            "s_4_temp": 0.3619176232275514,
+            "s_11_pressure": 0.3511904761904745
+        },
+        {
+            "cycle": 19,
+            "s_4_temp": 0.338453747467927,
+            "s_11_pressure": 0.23809523809523725
+        },
+        {
+            "cycle": 20,
+            "s_4_temp": 0.311444969615124,
+            "s_11_pressure": 0.3630952380952408
+        },
+        {
+            "cycle": 21,
+            "s_4_temp": 0.2861242403781219,
+            "s_11_pressure": 0.3035714285714306
+        },
+        {
+            "cycle": 22,
+            "s_4_temp": 0.3681634031060099,
+            "s_11_pressure": 0.24404761904761685
+        },
+        {
+            "cycle": 23,
+            "s_4_temp": 0.21674544226873493,
+            "s_11_pressure": 0.20238095238095255
+        },
+        {
+            "cycle": 24,
+            "s_4_temp": 0.30216070222822466,
+            "s_11_pressure": 0.26190476190476275
+        },
+        {
+            "cycle": 25,
+            "s_4_temp": 0.30351114112086464,
+            "s_11_pressure": 0.3095238095238102
+        },
+        {
+            "cycle": 26,
+            "s_4_temp": 0.4358541525995925,
+            "s_11_pressure": 0.2857142857142847
+        },
+        {
+            "cycle": 27,
+            "s_4_temp": 0.3048615800135046,
+            "s_11_pressure": 0.29166666666666785
+        },
+        {
+            "cycle": 28,
+            "s_4_temp": 0.32140445644834514,
+            "s_11_pressure": 0.11904761904761685
+        },
+        {
+            "cycle": 29,
+            "s_4_temp": 0.26772451046590007,
+            "s_11_pressure": 0.3392857142857153
+        },
+        {
+            "cycle": 30,
+            "s_4_temp": 0.31600270087778526,
+            "s_11_pressure": 0.32738095238095255
+        },
+        {
+            "cycle": 31,
+            "s_4_temp": 0.28122889939230333,
+            "s_11_pressure": 0.2261904761904745
+        }
+    ]
+}
