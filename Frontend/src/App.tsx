@@ -6,6 +6,8 @@ import { Canvas, useFrame } from '@react-three/fiber'
 import { ContactShadows, Html, OrbitControls } from '@react-three/drei'
 import { engineService } from './services/engineService'
 import type { ComponentHealth, ScreenName } from './data/engineData'
+import { createReplayState, advanceReplay, resetReplay, type ReplaySpeed, type ReplayState } from './services/replayController'
+import { getReplayComponentState, getReplayDegradationSeries, replayEvents, replayRuns } from './data/replayData'
 import './App.css'
 
 type EngineMode = 'STANDARD' | 'WIREFRAME' | 'THERMAL' | 'AIRFLOW'
@@ -47,6 +49,7 @@ function App() {
   const [selectedComponent, setSelectedComponent] = useState('hp-turbine')
   const [selectedSensor, setSelectedSensor] = useState('vibration')
   const [engineMode, setEngineMode] = useState<EngineMode>('STANDARD')
+  const [replay, setReplay] = useState(createReplayState())
   const [time, setTime] = useState(() => new Date())
   const selectComponent = (component: string) => {
     setSelectedComponent(component)
@@ -58,10 +61,26 @@ function App() {
     return () => window.clearInterval(timer)
   }, [])
 
-  const telemetry = engineService.getTelemetry()
-  const anomalies = engineService.getAnomalies()
+  useEffect(() => {
+    if (!replay.playing) return
+    const timer = window.setInterval(() => setReplay((state) => advanceReplay(state)), 250)
+    return () => window.clearInterval(timer)
+  }, [replay.playing])
+
+  const baseEngine = engineService.getEngineMeta()
+  const telemetry = replay.frame.telemetry
+  const anomalies = [...replayEvents.filter((event) => event.cycle <= replay.frame.cycle), ...engineService.getAnomalies().filter((event) => event.cycle <= replay.frame.cycle)]
   const maintenanceRecommendations = engineService.getMaintenanceRecommendations()
-  const engine = engineService.getEngineMeta()
+  const engine = {
+    ...baseEngine,
+    currentCycle: replay.frame.cycle,
+    rul: replay.frame.rul,
+    health: replay.frame.health,
+    status: replay.frame.status === 'HEALTHY' ? 'NOMINAL' : replay.frame.status,
+    nextInspection: replay.frame.status === 'CRITICAL' ? 0 : Math.max(1, 42 - replay.frame.cycle),
+    serviceWindow: replay.frame.status === 'CRITICAL' ? 'SERVICE REQUIRED' : replay.frame.status === 'WARNING' ? 'REVIEW WITHIN 20 CYCLES' : 'WITHIN 40-50 CYCLES',
+    risk: replay.frame.status === 'CRITICAL' ? 'HIGH' : replay.frame.status === 'WARNING' ? 'MEDIUM' : 'LOW',
+  }
   const components = engineService.getComponentHealth()
 
   const currentComponent = useMemo(
@@ -70,6 +89,7 @@ function App() {
   )
   const selectedMetric = telemetry.find((metric) => metric.key === selectedSensor) ?? telemetry[0]
   const relatedAnomalies = anomalies.filter((event) => event.component === selectedComponent)
+  const selectedComponentState = getReplayComponentState(selectedComponent, replay.frame.cycle)
 
   const sectionLabel =
     activeScreen === 'command'
@@ -132,6 +152,14 @@ function App() {
         </div>
       </header>
 
+      <ReplayControl
+        replay={replay}
+        onToggle={() => setReplay((state) => ({ ...state, playing: !state.playing && state.currentCycle < state.totalCycles }))}
+        onReset={() => setReplay((state) => resetReplay(state))}
+        onSpeedChange={(speed) => setReplay((state) => ({ ...state, speed }))}
+        onRunChange={(runId) => setReplay(createReplayState(runId))}
+      />
+
       <main className="workspace-shell">
         <div className="section-header-row">
           <div className="tiny-label uppercase">{sectionLabel}</div>
@@ -151,11 +179,11 @@ function App() {
               <>
                 <div className="command-layout">
                   <div className="engine-column">
-                    <EngineCard selectedComponent={selectedComponent} setSelectedComponent={selectComponent} />
+                    <EngineCard engine={engine} replayCycle={replay.frame.cycle} selectedComponent={selectedComponent} setSelectedComponent={selectComponent} />
                   </div>
 
                   <div className="instrument-column">
-                    <RULGauge />
+                    <RULGauge engine={engine} />
                     <TelemetryList metrics={telemetry} />
                   </div>
                 </div>
@@ -163,7 +191,7 @@ function App() {
                 <div className="lower-grid">
                   <div className="panel panel-graph">
                     <PanelHeader title="DEGRADATION ANALYTICS" tag="PREDICTION / TRACK" />
-                    <DegradationChart />
+                    <DegradationChart currentCycle={replay.frame.cycle} />
                   </div>
 
                   <div className="panel panel-anomaly">
@@ -173,7 +201,7 @@ function App() {
 
                   <div className="panel panel-forecast">
                     <PanelHeader title="MAINTENANCE FORECAST" tag="SERVICE WINDOW" />
-                    <MaintenanceForecast />
+                    <MaintenanceForecast engine={engine} />
                   </div>
                 </div>
               </>
@@ -205,12 +233,13 @@ function App() {
                     <Canvas camera={{ position: [0, 0.8, 9.7], fov: 35 }}>
                       <color attach="background" args={['#070707']} />
                       <ambientLight intensity={0.8} />
-                      <directionalLight position={[3, 3, 3]} intensity={1.5} color="#9fe8ff" />
+                      <directionalLight position={[3, 3, 3]} intensity={1.5} color="#f0f0eb" />
                       <pointLight position={[-2, -1, 4]} intensity={1} color="#d8a45c" />
                       <EngineAssembly
                         selectedComponent={selectedComponent}
                         setSelectedComponent={selectComponent}
                         mode={engineMode}
+                        replayCycle={replay.frame.cycle}
                       />
                       <ContactShadows position={[0, -2.8, 0]} opacity={0.45} scale={12} blur={2.4} far={7} />
                       <OrbitControls enablePan={false} enableDamping minDistance={6} maxDistance={16} />
@@ -235,7 +264,8 @@ function App() {
 
                   <div className="inspection-card">
                     <div className="inspection-row"><span>COMPONENT</span><strong>{currentComponent.label}</strong></div>
-                    <div className="inspection-row"><span>HEALTH</span><strong>{currentComponent.health}%</strong></div>
+                    <div className="inspection-row"><span>STATE</span><strong className={`component-state ${selectedComponentState.toLowerCase()}`}>{selectedComponentState}</strong></div>
+                    <div className="inspection-row"><span>HEALTH</span><strong>{currentComponent.health}% / ENGINE-LINKED DEMO</strong></div>
                     <div className="inspection-row"><span>TEMPERATURE</span><strong>{currentComponent.temperature} K</strong></div>
                     <div className="inspection-row"><span>PRESSURE</span><strong>{currentComponent.pressure} bar</strong></div>
                     <div className="inspection-row"><span>EFFICIENCY</span><strong>{currentComponent.efficiency}%</strong></div>
@@ -306,7 +336,7 @@ function App() {
                 <div className="panel prediction-panel">
                   <PanelHeader title="PREDICTED DEGRADATION" tag="MODEL INFERENCE" />
                   <div className="analysis-target">INVESTIGATION TARGET <strong>{currentComponent.label}</strong> <span>ENGINE-LEVEL MODEL OUTPUT</span></div>
-                  <PredictionChart />
+                  <PredictionChart currentCycle={replay.frame.cycle} />
                 </div>
 
                 <div className="panel trace-panel">
@@ -342,9 +372,9 @@ function App() {
             {activeScreen === 'maintenance' && (
               <div className="maintenance-screen">
                 <div className="prediction-stats">
-                  <StatTile label="ENGINE CONDITION" value="NOMINAL" suffix="STATUS" />
-                  <StatTile label="SERVICE WINDOW" value="40-50" suffix="CYCLES" />
-                  <StatTile label="RISK LEVEL" value="LOW" suffix="RISK" />
+                  <StatTile label="ENGINE CONDITION" value={engine.status} suffix="STATUS" />
+                  <StatTile label="SERVICE WINDOW" value={engine.nextInspection === 0 ? 'NOW' : `${engine.nextInspection}`} suffix={engine.nextInspection === 0 ? 'ACTION' : 'CYCLES'} />
+                  <StatTile label="RISK LEVEL" value={engine.risk} suffix="RISK" />
                   <StatTile label="NEXT INSPECTION" value={`${engine.nextInspection}`} suffix="CYCLES" />
                 </div>
 
@@ -391,6 +421,44 @@ function App() {
   )
 }
 
+function ReplayControl({ replay, onToggle, onReset, onSpeedChange, onRunChange }: { replay: ReplayState; onToggle: () => void; onReset: () => void; onSpeedChange: (speed: ReplaySpeed) => void; onRunChange: (runId: string) => void }) {
+  const status = replay.currentCycle >= replay.totalCycles ? 'RUN COMPLETE' : replay.playing ? 'PLAYING' : 'PAUSED'
+  const progress = (replay.currentCycle / replay.totalCycles) * 100
+
+  return (
+    <section className="replay-control panel" aria-label="Replay controls">
+      <div className="replay-heading">
+        <label>
+          <span className="tiny-label">REPLAY / OBSERVED SEQUENCE</span>
+          <select value={replay.runId} onChange={(event) => onRunChange(event.target.value)} aria-label="Select replay engine">
+            {replayRuns.map((run) => <option key={run.id} value={run.id}>{run.label}</option>)}
+          </select>
+        </label>
+        <span className={`replay-status ${status === 'PLAYING' ? 'playing' : status === 'RUN COMPLETE' ? 'complete' : ''}`}>{status}</span>
+      </div>
+      <div className="replay-readouts">
+        <span>ENGINE <strong>{replayRuns[0].id}</strong></span>
+        <span>CYCLE <strong>{replay.frame.cycle} / {replay.totalCycles}</strong></span>
+        <span>RUL <strong>{replay.frame.rul} CYCLES</strong></span>
+        <span>HEALTH <strong>{replay.frame.health}% / {replay.frame.status}</strong></span>
+      </div>
+      <div className="replay-actions">
+        <button type="button" className="ghost-button" onClick={onReset}>RESET</button>
+        <button type="button" className="replay-play" onClick={onToggle}>{replay.playing ? 'PAUSE' : 'PLAY'}</button>
+        <div className="replay-speeds" aria-label="Replay speed">
+          <span className="tiny-label">SPEED</span>
+          {([1, 5, 10, 20] as ReplaySpeed[]).map((speed) => (
+            <button key={speed} type="button" className={replay.speed === speed ? 'time-button active' : 'time-button'} onClick={() => onSpeedChange(speed)}>{speed}x</button>
+          ))}
+        </div>
+      </div>
+      <div className="replay-progress" aria-label={`Replay progress ${progress}%`}>
+        <span style={{ width: `${progress}%` }} />
+      </div>
+    </section>
+  )
+}
+
 function HUDBackground() {
   return (
     <div className="hud-bg" aria-hidden="true">
@@ -405,17 +473,17 @@ function HUDBackground() {
   )
 }
 
-function EngineCard({ selectedComponent, setSelectedComponent }: { selectedComponent: string; setSelectedComponent: (value: string) => void }) {
+function EngineCard({ engine, replayCycle, selectedComponent, setSelectedComponent }: { engine: ReturnType<typeof engineService.getEngineMeta>; replayCycle: number; selectedComponent: string; setSelectedComponent: (value: string) => void }) {
   return (
     <div className="panel engine-panel">
       <PanelHeader title="ENGINE DIGITAL TWIN" tag="DATA LINK STABLE" />
       <div className="engine-stage">
         <Canvas camera={{ position: [0, 0.3, 9], fov: 34 }}>
-          <color attach="background" args={['#030d17']} />
+          <color attach="background" args={['#090909']} />
           <ambientLight intensity={0.8} />
           <directionalLight position={[2.5, 2, 3]} intensity={1.6} color="#f0f0eb" />
           <pointLight position={[0, 0.2, 2]} intensity={0.7} color="#d8a45c" />
-          <EngineAssembly selectedComponent={selectedComponent} setSelectedComponent={setSelectedComponent} mode="STANDARD" />
+          <EngineAssembly selectedComponent={selectedComponent} setSelectedComponent={setSelectedComponent} mode="STANDARD" replayCycle={replayCycle} />
           <ContactShadows position={[0, -3.4, 0]} opacity={0.45} scale={12} blur={2.6} far={8} />
           <OrbitControls enablePan={false} enableDamping minDistance={6} maxDistance={14} maxPolarAngle={Math.PI * 0.8} />
         </Canvas>
@@ -424,11 +492,11 @@ function EngineCard({ selectedComponent, setSelectedComponent }: { selectedCompo
       <div className="engine-readouts">
         <div className="tiny-readout">
           <span className="tiny-label">CYCLE</span>
-          <strong>218</strong>
+          <strong>{engine.currentCycle}</strong>
         </div>
         <div className="tiny-readout">
           <span className="tiny-label">STATUS</span>
-          <strong>NOMINAL</strong>
+          <strong>{engine.status}</strong>
         </div>
         <div className="tiny-readout">
           <span className="tiny-label">SCAN</span>
@@ -443,10 +511,12 @@ function EngineAssembly({
   selectedComponent,
   setSelectedComponent,
   mode = 'STANDARD',
+  replayCycle = 0,
 }: {
   selectedComponent: string
   setSelectedComponent?: (value: string) => void
   mode?: EngineMode
+  replayCycle?: number
 }) {
   const groupRef = useRef<Group>(null)
 
@@ -460,37 +530,31 @@ function EngineAssembly({
   const getMaterial = (name: string, baseColor: string) => {
     const thermal = mode === 'THERMAL'
     const airflow = mode === 'AIRFLOW'
+    const componentState = getReplayComponentState(name, replayCycle)
+    const stateColor = componentState === 'CRITICAL' ? '#d83b32' : componentState === 'WARNING' ? '#e0a458' : componentState === 'DEGRADING' ? '#9c7a4d' : null
+    const selectedColor = selectedComponent === name ? (thermal ? '#ff8d5c' : airflow ? '#ffffff' : '#ffffff') : null
+    const selectedEmissive = selectedComponent === name ? (thermal ? '#d15b2d' : '#ffffff') : null
+    const modeColor = thermal
+      ? name === 'combustor' || name === 'hp-turbine'
+        ? '#ff8d5c'
+        : name === 'fan'
+          ? '#b5b6b0'
+          : '#6a6b67'
+      : airflow
+        ? '#b8b8b0'
+        : baseColor
+    const modeEmissive = thermal
+      ? name === 'combustor' || name === 'hp-turbine'
+        ? '#7f2f16'
+        : '#242522'
+      : airflow
+        ? '#3a3a36'
+        : '#20211f'
 
     return {
-      color:
-        selectedComponent === name
-          ? thermal
-            ? '#ff8d5c'
-            : airflow
-              ? '#8ef0d8'
-              : '#ffffff'
-          : thermal
-            ? name === 'combustor' || name === 'hp-turbine'
-              ? '#ff8d5c'
-              : name === 'fan'
-                ? '#b5c5d6'
-                : '#6a7887'
-            : airflow
-              ? '#b8b8b0'
-              : baseColor,
-      emissive:
-        selectedComponent === name
-          ? thermal
-            ? '#d15b2d'
-            : '#ffffff'
-          : thermal
-            ? name === 'combustor' || name === 'hp-turbine'
-              ? '#7f2f16'
-              : '#0f2332'
-            : airflow
-              ? '#3a3a36'
-              : '#20211f',
-      emissiveIntensity: selectedComponent === name ? (thermal ? 1.8 : 1.2) : thermal ? 0.9 : 0.18,
+      color: selectedColor ?? stateColor ?? modeColor,
+      emissive: selectedEmissive ?? (stateColor ? stateColor : modeEmissive),
+      emissiveIntensity: selectedComponent === name ? (thermal ? 1.8 : 1.2) : stateColor ? 0.8 : thermal ? 0.9 : 0.18,
       metalness: mode === 'STANDARD' ? 0.78 : mode === 'WIREFRAME' ? 0.28 : 0.6,
       roughness: mode === 'STANDARD' ? 0.28 : mode === 'WIREFRAME' ? 0.85 : 0.45,
       wireframe: mode === 'WIREFRAME',
@@ -504,7 +568,7 @@ function EngineAssembly({
         <meshStandardMaterial color="#4c4e4b" metalness={0.82} roughness={0.24} emissive="#1a1b19" emissiveIntensity={0.4} />
       </mesh>
 
-      <mesh position={[0, 0, -4.1]}>
+      <mesh position={[0, 0, -4.1]} onClick={() => setSelectedComponent?.('fan')}>
         <cylinderGeometry args={[1.75, 1.95, 1.1, 48]} />
         <meshStandardMaterial {...getMaterial('fan', '#8d918e')} />
         <mesh onClick={() => setSelectedComponent?.('fan')}>
@@ -516,11 +580,11 @@ function EngineAssembly({
       {Array.from({ length: 8 }).map((_, index) => (
         <mesh key={`fan-blade-${index}`} position={[0, 0, -3.8]} rotation={[0, (Math.PI / 4) * index, Math.PI / 2]}>
           <boxGeometry args={[0.2, 0.76, 1.8]} />
-          <meshStandardMaterial color={selectedComponent === 'fan' ? '#ffffff' : '#a7aaa5'} emissive={selectedComponent === 'fan' ? '#777873' : '#242522'} emissiveIntensity={selectedComponent === 'fan' ? 0.8 : 0.15} metalness={0.9} roughness={0.2} />
+          <meshStandardMaterial {...getMaterial('fan', '#a7aaa5')} />
         </mesh>
       ))}
 
-      <mesh position={[0, 0, -2.2]}> 
+      <mesh position={[0, 0, -2.2]} onClick={() => setSelectedComponent?.('compressor')}> 
         <cylinderGeometry args={[1.95, 2.1, 1.1, 48]} />
         <meshStandardMaterial {...getMaterial('compressor', '#777b78')} />
         <mesh onClick={() => setSelectedComponent?.('compressor')}>
@@ -532,11 +596,11 @@ function EngineAssembly({
       {Array.from({ length: 7 }).map((_, index) => (
         <mesh key={`disc-${index}`} position={[0, 0, -1.2 + index * 0.75]}>
           <cylinderGeometry args={[1.05 + index * 0.12, 1.15 + index * 0.12, 0.22, 32]} />
-          <meshStandardMaterial color="#afbad0" metalness={0.8} roughness={0.3} emissive="#0d1d2c" emissiveIntensity={0.22} />
+          <meshStandardMaterial {...getMaterial('compressor', '#a5a6a0')} />
         </mesh>
       ))}
 
-      <mesh position={[0, 0, 0.6]}>
+      <mesh position={[0, 0, 0.6]} onClick={() => setSelectedComponent?.('combustor')}>
         <cylinderGeometry args={[2.1, 2.3, 1.7, 48]} />
         <meshStandardMaterial {...getMaterial('combustor', '#8c6b4c')} />
         <mesh onClick={() => setSelectedComponent?.('combustor')}>
@@ -545,7 +609,7 @@ function EngineAssembly({
         </mesh>
       </mesh>
 
-      <mesh position={[0, 0, 2.2]}>
+      <mesh position={[0, 0, 2.2]} onClick={() => setSelectedComponent?.('hp-turbine')}>
         <cylinderGeometry args={[1.75, 1.9, 1.5, 48]} />
         <meshStandardMaterial {...getMaterial('hp-turbine', '#8c765f')} />
         <mesh onClick={() => setSelectedComponent?.('hp-turbine')}>
@@ -557,11 +621,11 @@ function EngineAssembly({
       {Array.from({ length: 8 }).map((_, index) => (
         <mesh key={`turbine-${index}`} position={[0, 0, 3.1 + index * 0.55]} rotation={[0, (Math.PI / 4) * index, 0]}>
           <boxGeometry args={[0.16, 1.32, 0.92]} />
-          <meshStandardMaterial color={selectedComponent === 'hp-turbine' ? '#ffffff' : '#b0aaa0'} emissive={selectedComponent === 'hp-turbine' ? '#777873' : '#242522'} emissiveIntensity={selectedComponent === 'hp-turbine' ? 0.8 : 0.12} metalness={0.9} roughness={0.22} />
+          <meshStandardMaterial {...getMaterial('hp-turbine', '#b0aaa0')} />
         </mesh>
       ))}
 
-      <mesh position={[0, 0, 4.8]}>
+      <mesh position={[0, 0, 4.8]} onClick={() => setSelectedComponent?.('lp-turbine')}>
         <cylinderGeometry args={[1.5, 1.65, 1.2, 48]} />
         <meshStandardMaterial {...getMaterial('lp-turbine', '#8b8c87')} />
         <mesh onClick={() => setSelectedComponent?.('lp-turbine')}>
@@ -570,7 +634,7 @@ function EngineAssembly({
         </mesh>
       </mesh>
 
-      <mesh position={[0, 0, 6.3]}>
+      <mesh position={[0, 0, 6.3]} onClick={() => setSelectedComponent?.('exhaust')}>
         <cylinderGeometry args={[1.35, 1.4, 1.5, 48]} />
         <meshStandardMaterial {...getMaterial('exhaust', '#777975')} />
         <mesh onClick={() => setSelectedComponent?.('exhaust')}>
@@ -646,9 +710,8 @@ function PanelHeader({ title, tag }: { title: string; tag: string }) {
   )
 }
 
-function RULGauge() {
-  const engine = engineService.getEngineMeta()
-  const gaugeProgress = 220
+function RULGauge({ engine }: { engine: ReturnType<typeof engineService.getEngineMeta> }) {
+  const gaugeProgress = Math.max(24, Math.round((engine.rul / 218) * 220))
   return (
     <div className="panel gauge-panel">
       <div className="gauge-wrap">
@@ -709,7 +772,7 @@ function Sparkline({ values, tone }: { values: number[]; tone: 'good' | 'watch' 
   const min = Math.min(...values)
   const path = values
     .map((value, index) => {
-      const x = (index / (values.length - 1)) * 100
+      const x = (index / Math.max(values.length - 1, 1)) * 100
       const y = 100 - ((value - min) / Math.max(max - min, 1)) * 100
       return `${index === 0 ? 'M' : 'L'} ${x} ${y}`
     })
@@ -745,8 +808,7 @@ function AnomalyStream({ events }: { events: Array<{ time: string; cycle: number
   )
 }
 
-function MaintenanceForecast() {
-  const engine = engineService.getEngineMeta()
+function MaintenanceForecast({ engine }: { engine: ReturnType<typeof engineService.getEngineMeta> }) {
   return (
     <div className="maintenance-summary">
       <div className="maintenance-stat-row">
@@ -769,11 +831,11 @@ function MaintenanceForecast() {
   )
 }
 
-function DegradationChart() {
+function DegradationChart({ currentCycle }: { currentCycle: number }) {
   return (
     <div className="chart-box">
       <ResponsiveContainer width="100%" height={220}>
-        <AreaChart data={engineService.getDegradationSeries()}>
+        <AreaChart data={getReplayDegradationSeries(currentCycle)}>
           <defs>
             <linearGradient id="observedGlow" x1="0" x2="0" y1="0" y2="1">
               <stop offset="0%" stopColor="#aeb1ab" stopOpacity={0.55} />
@@ -782,7 +844,7 @@ function DegradationChart() {
           </defs>
           <CartesianGrid stroke="rgba(183, 190, 194, 0.16)" strokeDasharray="3 6" />
           <XAxis dataKey="cycle" tick={{ fill: '#9ab3c8', fontSize: 11 }} tickLine={false} axisLine={false} />
-          <YAxis domain={[70, 100]} tick={{ fill: '#9ab3c8', fontSize: 11 }} tickLine={false} axisLine={false} />
+          <YAxis domain={[30, 100]} tick={{ fill: '#9ab3c8', fontSize: 11 }} tickLine={false} axisLine={false} />
           <Tooltip
             contentStyle={{
               background: '#081924',
@@ -791,7 +853,7 @@ function DegradationChart() {
               color: '#eef0ed',
             }}
           />
-          <ReferenceLine y={70} stroke="#ff6d77" strokeDasharray="5 5" label={{ value: 'THRESHOLD', position: 'insideTopRight', fill: '#ff9ca8' }} />
+          <ReferenceLine y={35} stroke="#ff6d77" strokeDasharray="5 5" label={{ value: 'THRESHOLD', position: 'insideTopRight', fill: '#ff9ca8' }} />
           <Area type="monotone" dataKey="observed" stroke="#d8d9d2" fill="url(#observedGlow)" strokeWidth={2.4} />
           <Line type="monotone" dataKey="predicted" stroke="#7ef5c0" strokeWidth={2} dot={false} strokeDasharray="6 6" />
           <Line type="monotone" dataKey="threshold" stroke="#ff5c78" strokeWidth={1.6} dot={false} hide />
@@ -842,7 +904,7 @@ function TelemetryChart({ metric, component }: { metric: ReturnType<typeof engin
   )
 }
 
-function PredictionChart() {
+function PredictionChart({ currentCycle }: { currentCycle: number }) {
   const predictionData = [
     { cycle: 120, observed: 96.4, predicted: 96.8 },
     { cycle: 150, observed: 95.2, predicted: 95.3 },
@@ -862,7 +924,7 @@ function PredictionChart() {
         <XAxis dataKey="cycle" tick={{ fill: '#9ab3c8', fontSize: 11 }} axisLine={false} tickLine={false} />
         <YAxis domain={[70, 100]} tick={{ fill: '#9ab3c8', fontSize: 11 }} axisLine={false} tickLine={false} />
         <Tooltip contentStyle={{ background: '#121313', border: '1px solid rgba(183,190,194,0.3)', borderRadius: '3px', color: '#eef0ed' }} />
-        <ReferenceLine x={218} stroke="#ffbe52" strokeDasharray="4 4" label={{ value: 'CURRENT', position: 'insideTopRight', fill: '#ffbe52' }} />
+        <ReferenceLine x={currentCycle} stroke="#ffbe52" strokeDasharray="4 4" label={{ value: 'CURRENT', position: 'insideTopRight', fill: '#ffbe52' }} />
         <Line type="monotone" dataKey="observed" stroke="#d8d9d2" strokeWidth={2.2} dot={false} />
         <Line type="monotone" dataKey="predicted" stroke="#7ef5c0" strokeWidth={2.2} dot={false} strokeDasharray="8 4" />
       </LineChart>

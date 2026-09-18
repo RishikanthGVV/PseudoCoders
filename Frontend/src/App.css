@@ -176,6 +176,135 @@
   margin-top: 18px;
 }
 
+.replay-control {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 1.1fr 1.8fr 1.6fr;
+  align-items: center;
+  gap: 18px;
+  margin-top: 14px;
+  padding: 12px 16px 10px;
+  border-left: 3px solid var(--amber);
+}
+
+.replay-heading,
+.replay-readouts,
+.replay-actions,
+.replay-speeds {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.replay-heading {
+  justify-content: space-between;
+}
+
+.replay-heading label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.replay-heading select {
+  max-width: 250px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.78rem;
+  letter-spacing: 0.12rem;
+  text-transform: uppercase;
+}
+
+.replay-heading select option {
+  background: #151515;
+  color: #eef0ed;
+}
+
+.replay-heading select:focus-visible,
+.replay-play:focus-visible,
+.replay-control button:focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: 2px;
+}
+
+.replay-heading strong {
+  color: var(--text);
+  font-size: 0.78rem;
+  letter-spacing: 0.12rem;
+}
+
+.replay-status {
+  color: var(--text-soft);
+  font-size: 0.62rem;
+  letter-spacing: 0.1rem;
+}
+
+.replay-status.playing { color: var(--green); }
+.replay-status.complete { color: var(--red); }
+
+.replay-readouts {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  color: var(--text-mute);
+  font-size: 0.58rem;
+  letter-spacing: 0.1rem;
+}
+
+.replay-readouts strong {
+  color: var(--text-soft);
+  margin-left: 4px;
+}
+
+.replay-actions {
+  justify-content: flex-end;
+}
+
+.replay-play {
+  appearance: none;
+  border: 1px solid var(--amber);
+  background: rgba(216, 164, 92, 0.14);
+  color: var(--text);
+  cursor: pointer;
+  padding: 8px 14px;
+  font-size: 0.64rem;
+  letter-spacing: 0.12rem;
+}
+
+.replay-speeds {
+  border-left: 1px solid var(--line);
+  padding-left: 10px;
+}
+
+.replay-speeds .time-button {
+  padding: 6px 8px;
+}
+
+.replay-speeds .time-button.active {
+  background: rgba(126, 245, 192, 0.12);
+  border-color: rgba(126, 245, 192, 0.55);
+  color: var(--green);
+}
+
+.replay-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: rgba(183, 190, 194, 0.16);
+}
+
+.replay-progress span {
+  display: block;
+  height: 100%;
+  background: var(--amber);
+  transition: width 0.2s linear;
+}
+
 .section-header-row {
   display: flex;
   justify-content: space-between;
@@ -1002,5 +1131,29 @@
   .prediction-stats,
   .model-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .replay-control {
+    grid-template-columns: 1fr;
+  }
+
+  .replay-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 700px) {
+  .replay-readouts {
+    justify-content: flex-start;
+  }
+
+  .replay-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .replay-speeds {
+    border-left: 0;
+    padding-left: 0;
   }
 }
